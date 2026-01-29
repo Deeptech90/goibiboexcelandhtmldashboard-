@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goibibo Executive Dashboard</title>
+
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<style>
+:root{
+--primary:#0b66ff;
+--bg:#ffffff;
+--muted:#f4f7fb;
+--text:#0f172a;
+--shadow:0 6px 18px rgba(0,0,0,.08);
+font-family: Inter, system-ui, Arial;
+}
+body{margin:0;background:var(--muted);color:var(--text)}
+.app{max-width:1400px;margin:auto;padding:16px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.logo{background:var(--primary);color:#fff;padding:10px 14px;border-radius:10px;font-weight:700}
+h1{font-size:18px;margin:0}
+.controls button{background:var(--primary);color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
+
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+.card{background:#fff;border-radius:12px;padding:12px;box-shadow:var(--shadow)}
+
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.kpi{background:linear-gradient(180deg,#eaf2ff,#fff);border-radius:10px;padding:12px}
+.kpi span{font-size:12px;color:#64748b}
+.kpi strong{font-size:20px}
+
+.left{grid-column:span 8}
+.right{grid-column:span 4}
+
+.chart{height:300px}
+.small{height:180px}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px;border-bottom:1px solid #eee}
+
+select,input{padding:8px;border-radius:8px;border:1px solid #ddd}
+
+@media(max-width:900px){
+.left,.right{grid-column:span 12}
+.kpis{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+
+<body>
+<div class="app">
+<header>
+<div>
+<div class="logo">GB</div>
+<h1>Goibibo – Executive Dashboard</h1>
+</div>
+<div class="controls">
+<button onclick="loadCSV()">Reload CSV</button>
+</div>
+</header>
+
+<div class="grid">
+<div class="card" style="grid-column:span 12">
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+<select id="cityFilter"></select>
+<select id="starFilter"></select>
+<input id="search" placeholder="Search Hotel">
+</div>
+
+<div class="kpis">
+<div class="kpi"><span>Total Properties</span><strong id="k1">–</strong></div>
+<div class="kpi"><span>Total Rooms</span><strong id="k2">–</strong></div>
+<div class="kpi"><span>Avg Rating</span><strong id="k3">–</strong></div>
+<div class="kpi"><span>Total Reviews</span><strong id="k4">–</strong></div>
+</div>
+</div>
+
+<div class="left">
+<div class="card chart"><canvas id="cityChart"></canvas></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+<div class="card small"><canvas id="starChart"></canvas></div>
+<div class="card small"><canvas id="ratingChart"></canvas></div>
+</div>
+
+<div class="card" style="margin-top:12px">
+<h3>Top Rated Hotels (&gt;50 Reviews)</h3>
+<table>
+<thead><tr><th>Hotel</th><th>City</th><th>Rating</th><th>Reviews</th></tr></thead>
+<tbody id="hotelTable"></tbody>
+</table>
+</div>
+</div>
+
+<div class="right">
+<div class="card chart"><canvas id="trendChart"></canvas></div>
+</div>
+</div>
+</div>
+
+<script>
+let raw=[],filtered=[],charts={};
+
+function loadCSV(){
+Papa.parse("cleaned_data.csv",{
+download:true,header:true,skipEmptyLines:true,
+complete:(res)=>{raw=res.data.map(r=>normalize(r));init()}
+});
+}
+
+function normalize(r){
+return{
+hotel:r.hotel_name||r.name,
+city:r.city,
+stars:+r.hotel_star_rating||null,
+rating:+r.site_review_rating||null,
+reviews:+r.site_review_count||0,
+rooms:+r.room_count||0
+};
+}
+
+function init(){
+populateFilters();
+apply();
+}
+
+function populateFilters(){
+cityFilter.innerHTML="<option value='all'>All Cities</option>";
+[...new Set(raw.map(r=>r.city).filter(Boolean))].sort()
+.forEach(c=>cityFilter.innerHTML+=`<option>${c}</option>`);
+
+starFilter.innerHTML="<option value='all'>All Stars</option>";
+[...new Set(raw.map(r=>r.stars).filter(Boolean))].sort()
+.forEach(s=>starFilter.innerHTML+=`<option>${s}</option>`);
+}
+
+cityFilter.onchange=starFilter.onchange=search.oninput=apply;
+
+function apply(){
+filtered=raw.filter(r=>
+(cityFilter.value==="all"||r.city===cityFilter.value)&&
+(starFilter.value==="all"||r.stars==starFilter.value)&&
+(!search.value||r.hotel.toLowerCase().includes(search.value.toLowerCase()))
+);
+kpis();chartsDraw();table();
+}
+
+function kpis(){
+k1.textContent=new Set(filtered.map(r=>r.hotel)).size;
+k2.textContent=filtered.reduce((a,b)=>a+b.rooms,0);
+k3.textContent=(filtered.reduce((a,b)=>a+(b.rating||0),0)/filtered.length||0).toFixed(2);
+k4.textContent=filtered.reduce((a,b)=>a+b.reviews,0);
+}
+
+function chartsDraw(){
+if(charts.city)charts.city.destroy();
+let byCity={};filtered.forEach(r=>byCity[r.city]=(byCity[r.city]||0)+1);
+charts.city=new Chart(cityChart,{type:'bar',
+data:{labels:Object.keys(byCity).slice(0,10),
+datasets:[{data:Object.values(byCity).slice(0,10),backgroundColor:'#0b66ff'}]},
+options:{plugins:{legend:{display:false}}}});
+
+if(charts.star)charts.star.destroy();
+let byStar={};filtered.forEach(r=>byStar[r.stars]=(byStar[r.stars]||0)+1);
+charts.star=new Chart(starChart,{type:'doughnut',
+data:{labels:Object.keys(byStar),datasets:[{data:Object.values(byStar)}]}});
+
+if(charts.rating)charts.rating.destroy();
+charts.rating=new Chart(ratingChart,{type:'bar',
+data:{labels:Object.keys(byCity).slice(0,10),
+datasets:[{data:Object.values(byCity).slice(0,10)}]},
+options:{scales:{y:{max:5}}}});
+}
+
+function table(){
+hotelTable.innerHTML="";
+filtered.filter(r=>r.reviews>50)
+.sort((a,b)=>b.rating-a.rating).slice(0,20)
+.forEach(r=>{
+hotelTable.innerHTML+=`<tr>
+<td>${r.hotel}</td><td>${r.city}</td>
+<td>${r.rating}</td><td>${r.reviews}</td></tr>`;
+});
+}
+
+loadCSV();
+</script>
+</body>
+</html>
